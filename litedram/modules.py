@@ -271,6 +271,30 @@ class MT41J128M16(SDRAMModule):
     tRFC = tRFC_1600
     tFAW = tFAW_1600
 
+class K4B2G0846FBCK0(SDRAMModule):
+    memtype = "DDR3"
+    # geometry
+    nbanks = 8
+    nrows  = 16384
+    ncols  = 1024
+    # speedgrade invariant timings
+    tREFI = 3900  # refresh more often at 85C+
+    tWTR  = (4, 7.5)
+    tCCD  = (4, None)
+    tRRD  = 10  # 4 * clk = 10ns
+    # speedgrade related timings
+    # DDR3-1600
+    tRP_1600  = 13.75
+    tRCD_1600 = 13.75
+    tWR_1600  = 15
+    tRFC_1600 = 160
+    tFAW_1600 = (40, None)
+    # API retro-compatibility
+    tRP  = tRP_1600
+    tRCD = tRCD_1600
+    tWR  = tWR_1600
+    tRFC = tRFC_1600
+    tFAW = tFAW_1600
 
 class MT41K128M16(MT41J128M16):
     pass
