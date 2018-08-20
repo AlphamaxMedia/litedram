@@ -279,14 +279,14 @@ class K4B2G1646FBCK0(SDRAMModule):
     ncols  = 1024
     # speedgrade invariant timings
     tREFI = 7800  # 3900 refresh more often at 85C+
-    tWTR  = (4, 7.5)
+    tWTR  = (14, 35)
     tCCD  = (4, None)
     tRRD  = 10  # 4 * clk = 10ns
     # speedgrade related timings
     # DDR3-1600
     tRP_1600  = 13.125
     tRCD_1600 = 13.125
-    tWR_1600  = 15
+    tWR_1600  = 20  # this is hard-coded in MR0 to be 8 cycles, 8 * 2.5 = 20
     tRFC_1600 = 160
     tFAW_1600 = (None, 40)
     # API retro-compatibility

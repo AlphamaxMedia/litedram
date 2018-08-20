@@ -34,7 +34,7 @@ def get_cl_cw(memtype, tck):
     elif memtype == "DDR3":
         # ddr3-1066
         if tck >= 2/1066e6:
-            cl, cwl = 7, 6
+            cl, cwl = 6, 5 # 7, 6
         # ddr3-1333
         elif tck >= 2/1333e6:
             cl, cwl = 10, 7
