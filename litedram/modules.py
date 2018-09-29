@@ -366,7 +366,7 @@ class K4B2G1646FBCK0(SDRAMModule):  ### TODO: optimize and revalidate all timing
     ncols  = 1024
     # speedgrade invariant timings
     tREFI = 7800  # 3900 refresh more often at 85C+
-    tWTR  = (14, 35)
+    tWTR  = (6, 15)
     tCCD  = (4, None)
     tRRD  = 10  # 4 * clk = 10ns
     # speedgrade related timings
