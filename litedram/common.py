@@ -10,9 +10,10 @@ class PhySettings:
                  nphases,
                  rdphase, wrphase,
                  rdcmdphase, wrcmdphase,
-                 cl, read_latency, write_latency, cwl=None):
+                 cl, read_latency, write_latency, nranks=1, cwl=None):
         self.memtype = memtype
         self.dfi_databits = dfi_databits
+        self.nranks = nranks
 
         self.nphases = nphases
         self.rdphase = rdphase
@@ -42,7 +43,7 @@ class GeomSettings:
 
 
 class TimingSettings:
-    def __init__(self, tRP, tRCD, tWR, tWTR, tREFI, tRFC, tFAW, tCCD, tRRD):
+    def __init__(self, tRP, tRCD, tWR, tWTR, tREFI, tRFC, tFAW, tCCD, tRRD, tRC, tRAS):
         self.tRP = tRP
         self.tRCD = tRCD
         self.tWR = tWR
@@ -52,6 +53,8 @@ class TimingSettings:
         self.tFAW = tFAW
         self.tCCD = tCCD
         self.tRRD = tRRD
+        self.tRC = tRC
+        self.tRAS = tRAS
 
 
 def cmd_layout(address_width):
@@ -79,9 +82,11 @@ def data_layout(data_width):
 
 class LiteDRAMInterface(Record):
     def __init__(self, address_align, settings):
-        self.address_width = settings.geom.rowbits + settings.geom.colbits - address_align
+        rankbits = log2_int(settings.phy.nranks)
+        self.address_width = settings.geom.rowbits + settings.geom.colbits + rankbits - address_align
         self.data_width = settings.phy.dfi_databits*settings.phy.nphases
-        self.nbanks = 2**settings.geom.bankbits
+        self.nbanks = settings.phy.nranks*(2**settings.geom.bankbits)
+        self.nranks = settings.phy.nranks
         self.settings = settings
 
         layout = [("bank"+str(i), cmd_layout(self.address_width)) for i in range(self.nbanks)]
@@ -111,7 +116,7 @@ def rdata_description(data_width, with_bank):
 
 
 class LiteDRAMNativePort:
-    def __init__(self, mode, address_width, data_width, clock_domain="sys", id=0, with_reordering=False):
+    def __init__(self, mode, address_width, data_width, clock_domain="sys", id=0):
         self.mode = mode
         self.address_width = address_width
         self.data_width = data_width
@@ -120,14 +125,10 @@ class LiteDRAMNativePort:
 
         self.lock = Signal()
 
-        self.with_reordering = with_reordering
-
         self.cmd = stream.Endpoint(cmd_description(address_width))
-        self.wdata = stream.Endpoint(wdata_description(data_width, with_reordering))
-        self.rdata = stream.Endpoint(rdata_description(data_width, with_reordering))
+        self.wdata = stream.Endpoint(wdata_description(data_width, True))
+        self.rdata = stream.Endpoint(rdata_description(data_width, True))
 
-        if with_reordering:
-            print("[WARNING] Reordering controller is still experimental")
         self.flush = Signal()
 
         # retro-compatibility # FIXME: remove

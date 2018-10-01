@@ -10,7 +10,6 @@ Features:
 - ID support (configurable width).
 
 Limitations:
-- Write response always supposed to be ready.
 - Response always okay.
 - No reordering.
 """
@@ -89,7 +88,8 @@ class LiteDRAMAXIBurst2Beat(Module):
 
         # convert burst size to bytes
         cases = {}
-        for i in range(11):
+        cases["default"] = size.eq(1024)
+        for i in range(10):
             cases[i] = size.eq(2**i)
         self.comb += Case(ax_burst.size, cases)
 
@@ -102,17 +102,19 @@ class LiteDRAMAXIBurst2Beat(Module):
             ax_beat.id.eq(ax_burst.id),
             If(ax_beat.valid & ax_beat.ready,
                 If(ax_burst.len != 0,
-                    NextValue(count, 0),
-                    NextValue(offset, size),
                     NextState("BURST2BEAT")
                 ).Else(
                     ax_burst.ready.eq(1)
                 )
-            )
+            ),
+            NextValue(count, 1),
+            NextValue(offset, size),
         )
+        wrap_offset = Signal(8 + 4)
+        self.sync += wrap_offset.eq((ax_burst.len - 1)*size)
         fsm.act("BURST2BEAT",
             ax_beat.valid.eq(1),
-            ax_beat.last.eq(count == (ax_burst.len - 1)),
+            ax_beat.last.eq(count == ax_burst.len),
             If((ax_burst.burst == burst_types["incr"]) |
                (ax_burst.burst == burst_types["wrap"]),
                 ax_beat.addr.eq(ax_burst.addr + offset)
@@ -124,13 +126,12 @@ class LiteDRAMAXIBurst2Beat(Module):
                 If(ax_beat.last,
                     ax_burst.ready.eq(1),
                     NextState("IDLE")
-                ).Else(
-                    NextValue(count, count + 1),
-                    NextValue(offset, offset + size),
-                    If(ax_burst.burst == burst_types["wrap"],
-                        If(offset == (ax_burst.len - 1)*size,
-                            NextValue(offset, 0)
-                        )
+                ),
+                NextValue(count, count + 1),
+                NextValue(offset, offset + size),
+                If(ax_burst.burst == burst_types["wrap"],
+                    If(offset == wrap_offset,
+                        NextValue(offset, 0)
                     )
                 )
             )
@@ -143,8 +144,6 @@ class LiteDRAMAXI2NativeW(Module):
         self.cmd_grant = Signal()
 
         # # #
-
-        can_write = Signal()
 
         ashift = log2_int(port.data_width//8)
 
@@ -159,27 +158,28 @@ class LiteDRAMAXI2NativeW(Module):
         w_buffer = stream.SyncFIFO(w_description(axi.data_width), buffer_depth)
         self.submodules += w_buffer
 
-        # Write Buffer reservation
-        self.comb += can_write.eq(w_buffer.sink.ready)
-
         # Write ID Buffer & Response
         id_buffer = stream.SyncFIFO([("id", axi.id_width)], buffer_depth)
-        self.submodules += id_buffer
+        resp_buffer = stream.SyncFIFO([("id", axi.id_width), ("resp", 2)], buffer_depth)
+        self.submodules += id_buffer, resp_buffer
         self.comb += [
             id_buffer.sink.valid.eq(aw.valid & aw.ready),
             id_buffer.sink.id.eq(aw.id),
-            axi.b.valid.eq(axi.w.valid & axi.w.ready), # Note: Write response always supposed to be ready.
-            axi.b.resp.eq(resp_types["okay"]),
-            axi.b.id.eq(id_buffer.source.id),
-            id_buffer.source.ready.eq(axi.b.valid & axi.b.ready)
+            If(axi.w.valid & axi.w.last & axi.w.ready,
+                resp_buffer.sink.valid.eq(1),
+                resp_buffer.sink.resp.eq(resp_types["okay"]),
+                resp_buffer.sink.id.eq(id_buffer.source.id),
+                id_buffer.source.ready.eq(1)
+            ),
+            resp_buffer.source.connect(axi.b)
         ]
 
         # Command
         self.comb += [
-            self.cmd_request.eq(aw.valid & can_write),
+            self.cmd_request.eq(aw.valid),
             If(self.cmd_grant,
-                port.cmd.valid.eq(aw.valid & can_write),
-                aw.ready.eq(port.cmd.ready & can_write),
+                port.cmd.valid.eq(aw.valid),
+                aw.ready.eq(port.cmd.ready),
                 port.cmd.we.eq(1),
                 port.cmd.addr.eq(aw.addr >> ashift)
             )
@@ -259,7 +259,7 @@ class LiteDRAMAXI2NativeR(Module):
 
         # Read data
         self.comb += [
-            port.rdata.connect(r_buffer.sink),
+            port.rdata.connect(r_buffer.sink, omit={"bank"}),
             r_buffer.source.connect(axi.r, omit={"id", "last"}),
             axi.r.resp.eq(resp_types["okay"])
         ]

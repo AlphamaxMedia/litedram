@@ -3,13 +3,14 @@ from operator import add, or_, and_
 
 from migen import *
 from migen.genlib.roundrobin import *
+from migen.genlib.coding import Decoder
 
 from litex.soc.interconnect import stream
 from litex.soc.interconnect.csr import AutoCSR
 
 from litedram.common import *
 from litedram.core.perf import Bandwidth
-
+import math
 
 class _CommandChooser(Module):
     def __init__(self, requests):
@@ -62,7 +63,9 @@ class _CommandChooser(Module):
                 If(cmd.valid & cmd.ready & (arbiter.grant == i),
                     request.ready.eq(1)
                 )
-        self.comb += arbiter.ce.eq(cmd.ready)
+	# Arbitrate if we're accepting commands, *or* if we are not but the current selection is not valid
+	#	This is to ensure that a valid command is selected when cmd.ready goes high
+        self.comb += arbiter.ce.eq(cmd.ready | ~cmd.valid)
 
     # helpers
     def accept(self):
@@ -90,24 +93,34 @@ class _Steerer(Module):
             if not hasattr(cmd, "valid"):
                 return 0
             else:
-                return cmd.valid & getattr(cmd, attr)
+                return cmd.valid & cmd.ready & getattr(cmd, attr)
 
         for phase, sel in zip(dfi.phases, self.sel):
-            self.comb += [
-                phase.cke.eq(1),
-                phase.cs_n.eq(0)
-            ]
-            if hasattr(phase, "odt"):
-                self.comb += phase.odt.eq(1)
+            nranks = len(phase.cs_n)
+            rankbits = log2_int(nranks)
             if hasattr(phase, "reset_n"):
                 self.comb += phase.reset_n.eq(1)
+            self.comb += phase.cke.eq(Replicate(Signal(reset=1), nranks))
+            if hasattr(phase, "odt"):
+                # FIXME: add dynamic drive for multi-rank (will be needed for high frequencies)
+                self.comb += phase.odt.eq(Replicate(Signal(reset=1), nranks))
+            if rankbits:
+                rank_decoder = Decoder(rankbits)
+                self.submodules += rank_decoder
+                self.comb += rank_decoder.i.eq((Array(cmd.ba[-rankbits:] for cmd in commands)[sel]))
+                self.sync += phase.cs_n.eq(~rank_decoder.o)
+                self.sync += phase.bank.eq(Array(cmd.ba[:-rankbits] for cmd in commands)[sel])
+            else:
+                self.sync += phase.cs_n.eq(0)
+                self.sync += phase.bank.eq(Array(cmd.ba[:] for cmd in commands)[sel])
+
             self.sync += [
                 phase.address.eq(Array(cmd.a for cmd in commands)[sel]),
-                phase.bank.eq(Array(cmd.ba for cmd in commands)[sel]),
-                phase.cas_n.eq(~Array(cmd.cas for cmd in commands)[sel]),
-                phase.ras_n.eq(~Array(cmd.ras for cmd in commands)[sel]),
-                phase.we_n.eq(~Array(cmd.we for cmd in commands)[sel])
+                phase.cas_n.eq(~Array(valid_and(cmd, "cas") for cmd in commands)[sel]),
+                phase.ras_n.eq(~Array(valid_and(cmd, "ras") for cmd in commands)[sel]),
+                phase.we_n.eq(~Array(valid_and(cmd, "we") for cmd in commands)[sel])
             ]
+
             rddata_ens = Array(valid_and(cmd, "is_read") for cmd in commands)
             wrdata_ens = Array(valid_and(cmd, "is_write") for cmd in commands)
             self.sync += [
@@ -125,10 +138,10 @@ class tXXDController(Module):
         # # #
 
         if txxd is not None:
-            count = Signal(max=max(txxd+1, 2))
+            count = Signal(max=max(txxd, 2))
             self.sync += \
                 If(valid,
-                    count.eq(txxd),
+                    count.eq(txxd-1),
                     If((txxd - 1) == 0,
                         ready.eq(1)
                     ).Else(
@@ -190,7 +203,7 @@ class Multiplexer(Module, AutoCSR):
 
         # Command steering
         nop = Record(cmd_request_layout(settings.geom.addressbits,
-                                        settings.geom.bankbits))
+                                        log2_int(len(bank_machines))))
         # nop must be 1st
         commands = [nop, choose_cmd.cmd, choose_req.cmd, refresher.cmd]
         (STEER_NOP, STEER_CMD, STEER_REQ, STEER_REFRESH) = range(4)
@@ -207,7 +220,6 @@ class Multiplexer(Module, AutoCSR):
 
         # RAS control
         self.comb += ras_allowed.eq(trrdcon.ready & tfawcon.ready)
-        self.comb += [bm.ras_allowed.eq(ras_allowed) for bm in bank_machines]
 
         # tCCD timing (Column to Column delay)
         self.submodules.tccdcon = tccdcon = tXXDController(settings.timing.tCCD)
@@ -215,11 +227,11 @@ class Multiplexer(Module, AutoCSR):
 
         # CAS control
         self.comb += cas_allowed.eq(tccdcon.ready)
-        self.comb += [bm.cas_allowed.eq(cas_allowed) for bm in bank_machines]
 
         # tWTR timing (Write to Read delay)
+        write_latency = math.ceil(settings.phy.cwl / settings.phy.nphases)
         self.submodules.twtrcon = twtrcon = tXXDController(
-            settings.timing.tWTR +
+            settings.timing.tWTR + write_latency +
             # tCCD must be added since tWTR begins after the transfer is complete
             settings.timing.tCCD if settings.timing.tCCD is not None else 0)
         self.comb += twtrcon.valid.eq(choose_req.accept() & choose_req.write())
@@ -295,7 +307,7 @@ class Multiplexer(Module, AutoCSR):
             choose_req.want_reads.eq(1),
             choose_cmd.want_activates.eq(ras_allowed),
             choose_cmd.cmd.ready.eq(~choose_cmd.activate() | ras_allowed),
-            choose_req.cmd.ready.eq(1),
+            choose_req.cmd.ready.eq(cas_allowed),
             steerer_sel(steerer, "read"),
             If(write_available,
                 # TODO: switch only after several cycles of ~read_available?
@@ -312,7 +324,7 @@ class Multiplexer(Module, AutoCSR):
             choose_req.want_writes.eq(1),
             choose_cmd.want_activates.eq(ras_allowed),
             choose_cmd.cmd.ready.eq(~choose_cmd.activate() | ras_allowed),
-            choose_req.cmd.ready.eq(1),
+            choose_req.cmd.ready.eq(cas_allowed),
             steerer_sel(steerer, "write"),
             If(read_available,
                 If(~write_available | max_write_time,
