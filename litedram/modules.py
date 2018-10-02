@@ -403,7 +403,7 @@ class MT18KSF1G72HZ(SDRAMModule):
     tFAW = tFAW_1600
 
 
-class K4B2G1646FBCK0(SDRAMModule):  ### TODO: optimize and revalidate all timings, at cold and hot temperatures
+class K4B2G1646FBCK0(SDRAMModule):  ### Tested boot at 4C and 60C
     memtype = "DDR3"
     # geometry
     nbanks = 8
