@@ -300,7 +300,6 @@ class MT18KSF1G72HZ(SDRAMModule):
     nbanks = 8
     nrows  = 65536
     ncols  = 1024
-<<<<<<< HEAD
     # speedgrade invariant timings
     tREFI = 64e6/8192
     tWTR = (4, 7.5)
@@ -329,6 +328,14 @@ class MT18KSF1G72HZ(SDRAMModule):
     tWR  = tWR_1600
     tRFC = tRFC_1600
     tFAW = tFAW_1600
+    # timings
+    technology_timings = _TechnologyTimings(tREFI=64e6/8192, tWTR=(4, 7.5), tCCD=(4, None), tRRD=None)
+    speedgrade_timings = {
+        "1066": _SpeedgradeTimings(tRP=15, tRCD=15, tWR=15, tRFC=86, tFAW=(None, 50), tRC=None, tRAS=None),
+        "1333": _SpeedgradeTimings(tRP=15, tRCD=15, tWR=15, tRFC=107, tFAW=(None, 45), tRC=None, tRAS=None),
+        "1600": _SpeedgradeTimings(tRP=13.125, tRCD=13.125, tWR=13.125, tRFC=128, tFAW=(None, 40), tRC=None, tRAS=None),
+    }
+    speedgrade_timings["default"] = speedgrade_timings["1600"]
 
 
 class K4B2G1646FBCK0(SDRAMModule):  ### Tested boot at 4C and 60C
@@ -359,13 +366,9 @@ class K4B2G1646FBCK0(SDRAMModule):  ### Tested boot at 4C and 60C
     tFAW = tFAW_1600
     tRC = tRC_1600
     tRAS = tRAS_1600
-=======
     # timings
-    technology_timings = _TechnologyTimings(tREFI=64e6/8192, tWTR=(4, 7.5), tCCD=(4, None), tRRD=None)
+    technology_timings = _TechnologyTimings(tREFI=7800, tWTR=(6, 15), tCCD=(4, None), tRRD=10)
     speedgrade_timings = {
-        "1066": _SpeedgradeTimings(tRP=15, tRCD=15, tWR=15, tRFC=86, tFAW=(None, 50), tRC=None, tRAS=None),
-        "1333": _SpeedgradeTimings(tRP=15, tRCD=15, tWR=15, tRFC=107, tFAW=(None, 45), tRC=None, tRAS=None),
-        "1600": _SpeedgradeTimings(tRP=13.125, tRCD=13.125, tWR=13.125, tRFC=128, tFAW=(None, 40), tRC=None, tRAS=None),
+        "1600": _SpeedgradeTimings(tRP=13.125, tRCD=13.125, tWR=35, tRFC=160, tFAW=(None, 40), tRC=48.75, tRAS=35),
     }
     speedgrade_timings["default"] = speedgrade_timings["1600"]
->>>>>>> 48c17ce8a4afb7fa94d68dc7ed498bb94845709c
