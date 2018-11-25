@@ -118,7 +118,7 @@ class S7DDRPHY(Module, AutoCSR):
                     o_OQ=sd_clk_se,
                     i_OCE=1,
                     i_RST=ResetSignal(),
-                    i_CLK=ClockSignal(ddr_clk), i_CLKDIV=ClockSignal(),
+                    i_CLK=ClockSignal(ddr_clk+"_ac"), i_CLKDIV=ClockSignal(),
                     i_D1=0, i_D2=1, i_D3=0, i_D4=1,
                     i_D5=0, i_D6=1, i_D7=0, i_D8=1
                 ),
@@ -140,7 +140,7 @@ class S7DDRPHY(Module, AutoCSR):
                     o_OQ=pads.a[i],
                     i_OCE=1,
                     i_RST=ResetSignal(),
-                    i_CLK=ClockSignal(ddr_clk), i_CLKDIV=ClockSignal(),
+                    i_CLK=ClockSignal(ddr_clk+"_ac"), i_CLKDIV=ClockSignal(),
                     i_D1=self.dfi.phases[0].address[i], i_D2=self.dfi.phases[0].address[i],
                     i_D3=self.dfi.phases[1].address[i], i_D4=self.dfi.phases[1].address[i],
                     i_D5=self.dfi.phases[2].address[i], i_D6=self.dfi.phases[2].address[i],
@@ -156,7 +156,7 @@ class S7DDRPHY(Module, AutoCSR):
                     o_OQ=pads.ba[i],
                     i_OCE=1,
                     i_RST=ResetSignal(),
-                    i_CLK=ClockSignal(ddr_clk), i_CLKDIV=ClockSignal(),
+                    i_CLK=ClockSignal(ddr_clk+"_ac"), i_CLKDIV=ClockSignal(),
                     i_D1=self.dfi.phases[0].bank[i], i_D2=self.dfi.phases[0].bank[i],
                     i_D3=self.dfi.phases[1].bank[i], i_D4=self.dfi.phases[1].bank[i],
                     i_D5=self.dfi.phases[2].bank[i], i_D6=self.dfi.phases[2].bank[i],
@@ -178,7 +178,7 @@ class S7DDRPHY(Module, AutoCSR):
                         o_OQ=getattr(pads, name)[i],
                         i_OCE=1,
                         i_RST=ResetSignal(),
-                        i_CLK=ClockSignal(ddr_clk), i_CLKDIV=ClockSignal(),
+                        i_CLK=ClockSignal(ddr_clk+"_ac"), i_CLKDIV=ClockSignal(),
                         i_D1=getattr(self.dfi.phases[0], name)[i], i_D2=getattr(self.dfi.phases[0], name)[i],
                         i_D3=getattr(self.dfi.phases[1], name)[i], i_D4=getattr(self.dfi.phases[1], name)[i],
                         i_D5=getattr(self.dfi.phases[2], name)[i], i_D6=getattr(self.dfi.phases[2], name)[i],
@@ -214,6 +214,7 @@ class S7DDRPHY(Module, AutoCSR):
 
         dqs_p = Signal(databits//8)
         dqs_n = Signal(databits//8)
+        dqs_i_delayed = Signal(databits//8)
         for i in range(databits//8):
             dm_o_nodelay = Signal()
             self.specials += \
@@ -282,6 +283,14 @@ class S7DDRPHY(Module, AutoCSR):
                         o_ODATAIN=dqs_nodelay, o_DATAOUT=dqs_delayed
                     )
             self.specials += \
+                Instance("IDELAYE2",
+                    p_DELAY_SRC="IDATAIN", p_SIGNAL_PATTERN="DATA",
+                    p_CINVCTRL_SEL="FALSE", p_HIGH_PERFORMANCE_MODE="TRUE", p_REFCLK_FREQUENCY=iodelay_clk_freq/1e6,
+                    p_PIPE_SEL="FALSE", p_IDELAY_TYPE="FIXED", p_IDELAY_VALUE=half_sys8x_taps,
+
+                    i_IDATAIN=dqs_p[i], o_DATAOUT=dqs_i_delayed[i]
+                )
+            self.specials += \
                 Instance("IOBUFDS",
                     i_I=dqs_delayed if with_odelay else dqs_nodelay, i_T=dqs_t,
                     io_IO=pads.dqs_p[i], io_IOB=pads.dqs_n[i],
@@ -322,14 +331,15 @@ class S7DDRPHY(Module, AutoCSR):
 
                     i_DDLY=dq_i_delayed,
                     i_CE1=1,
-                    i_RST=ResetSignal(),
-                    i_CLK=dqs_p[i//8], i_CLKB=~dqs_p[i//8],
-                    i_OCLK=ClockSignal(ddr_clk), i_OCLKB=~ClockSignal(ddr_clk), i_CLKDIV=ClockSignal("clk200"),
+                    i_RST=ResetSignal("sys2x"),
+#                    i_CLK=dqs_p[i//8], i_CLKB=~dqs_p[i//8],
+                    i_CLK=dqs_i_delayed[i//8], i_CLKB=~dqs_i_delayed[i//8],
+                    i_OCLK=ClockSignal(ddr_clk), i_OCLKB=~ClockSignal(ddr_clk), i_CLKDIV=ClockSignal("sys2x"),
                     i_BITSLIP=0,
                     o_Q4=dq_demux_data[0], o_Q3=dq_demux_data[1],
                     o_Q2=dq_demux_data[2], o_Q1=dq_demux_data[3]
                 )
-            self.sync.clk200 += [
+            self.sync.sys2x += [
                 dq_i_data[:4].eq(dq_i_data[4:]),
                 dq_i_data[4:].eq(dq_demux_data)
             ]
