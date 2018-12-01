@@ -331,15 +331,14 @@ class S7DDRPHY(Module, AutoCSR):
 
                     i_DDLY=dq_i_delayed,
                     i_CE1=1,
-                    i_RST=ResetSignal("sys2x_route"),
-#                    i_CLK=dqs_p[i//8], i_CLKB=~dqs_p[i//8],
+                    i_RST=ResetSignal("sys2x"),
                     i_CLK=dqs_i_delayed[i//8], i_CLKB=~dqs_i_delayed[i//8],
                     i_OCLK=ClockSignal(ddr_clk), i_OCLKB=~ClockSignal(ddr_clk), i_CLKDIV=ClockSignal("sys2x"),
                     i_BITSLIP=0,
                     o_Q4=dq_demux_data[0], o_Q3=dq_demux_data[1],
                     o_Q2=dq_demux_data[2], o_Q1=dq_demux_data[3]
                 )
-            self.sync.sys2x_route += [
+            self.sync.sys2x += [
                 dq_i_data[:4].eq(dq_i_data[4:]),
                 dq_i_data[4:].eq(dq_demux_data)
             ]
