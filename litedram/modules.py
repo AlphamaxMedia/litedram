@@ -454,8 +454,8 @@ class K4B2G1646FBCK0(SDRAMModule):  ### Tested boot at 4C and 60C
     tRC = tRC_1600
     tRAS = tRAS_1600
     # timings
-    technology_timings = _TechnologyTimings(tREFI=7800, tWTR=(6, 15), tCCD=(4, None), tRRD=10)
+    technology_timings = _TechnologyTimings(tREFI=7800, tWTR=(6, 15), tCCD=(4, None), tRRD=(4,10))
     speedgrade_timings = {
-        "1600": _SpeedgradeTimings(tRP=13.125, tRCD=13.125, tWR=35, tRFC=160, tFAW=(None, 40), tRC=48.75, tRAS=35),
+        "1600": _SpeedgradeTimings(tRP=13.125, tRCD=13.125, tWR=35, tRFC=160, tFAW=(None, 40), tRAS=35),
     }
     speedgrade_timings["default"] = speedgrade_timings["1600"]
