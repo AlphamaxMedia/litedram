@@ -1,3 +1,5 @@
+"""LiteDRAM Crossbar."""
+
 from functools import reduce
 from operator import or_
 
@@ -7,13 +9,13 @@ from migen.genlib import roundrobin
 from litex.soc.interconnect import stream
 
 from litedram.common import *
-from litedram.frontend.adaptation import LiteDRAMNativePortCDC, LiteDRAMNativePortConverter
+from litedram.core.controller import *
+from litedram.frontend.adaptation import *
 
 
 class LiteDRAMCrossbar(Module):
-    def __init__(self, controller, cba_shift):
+    def __init__(self, controller, ):
         self.controller = controller
-        self.cba_shift = cba_shift
 
         self.rca_bits = controller.address_width
         self.nbanks = controller.nbanks
@@ -49,8 +51,7 @@ class LiteDRAMCrossbar(Module):
             address_width=self.rca_bits + self.bank_bits - self.rank_bits,
             data_width=self.controller.data_width,
             clock_domain="sys",
-            id=len(self.masters),
-            with_bank=self.controller.settings.with_reordering)
+            id=len(self.masters))
         self.masters.append(port)
 
         # clock domain crossing
@@ -60,8 +61,7 @@ class LiteDRAMCrossbar(Module):
                 address_width=port.address_width,
                 data_width=port.data_width,
                 clock_domain=clock_domain,
-                id=port.id,
-                with_bank=self.controller.settings.with_reordering)
+                id=port.id)
             self.submodules += LiteDRAMNativePortCDC(new_port, port)
             port = new_port
 
@@ -76,21 +76,29 @@ class LiteDRAMCrossbar(Module):
                 address_width=port.address_width + addr_shift,
                 data_width=data_width,
                 clock_domain=clock_domain,
-                id=port.id,
-                with_bank=self.controller.settings.with_reordering)
-            self.submodules += ClockDomainsRenamer(clock_domain)(LiteDRAMNativePortConverter(new_port, port, reverse))
+                id=port.id)
+            self.submodules += ClockDomainsRenamer(clock_domain)(
+                LiteDRAMNativePortConverter(new_port, port, reverse))
             port = new_port
 
         return port
 
     def do_finalize(self):
+        controller = self.controller
         nmasters = len(self.masters)
 
-        m_ba, m_rca = self.split_master_addresses(self.bank_bits,
-                                                  self.rca_bits,
-                                                  self.cba_shift)
+        # address mapping
+        cba_shifts = {
+            "ROW_BANK_COL": controller.settings.geom.colbits -
+                            controller.address_align,
+            "ROW_COL_BANK": controller.settings.geom.rowbits +
+                            controller.settings.geom.colbits -
+                             controller.address_align
+        }
+        cba_shift = cba_shifts[controller.settings.address_mapping]
+        m_ba = [m.get_bank_address(self.bank_bits, cba_shift)for m in self.masters]
+        m_rca = [m.get_row_column_address(self.bank_bits, self.rca_bits, cba_shift) for m in self.masters]
 
-        controller = self.controller
         master_readys = [0]*nmasters
         master_wdata_readys = [0]*nmasters
         master_rdata_valids = [0]*nmasters
@@ -107,11 +115,10 @@ class LiteDRAMCrossbar(Module):
             master_locked = []
             for nm, master in enumerate(self.masters):
                 locked = Signal()
-                if not self.controller.settings.with_reordering:
-                    for other_nb, other_arbiter in enumerate(arbiters):
-                        if other_nb != nb:
-                            other_bank = getattr(controller, "bank"+str(other_nb))
-                            locked = locked | (other_bank.lock & (other_arbiter.grant == nm))
+                for other_nb, other_arbiter in enumerate(arbiters):
+                    if other_nb != nb:
+                        other_bank = getattr(controller, "bank"+str(other_nb))
+                        locked = locked | (other_bank.lock & (other_arbiter.grant == nm))
                 master_locked.append(locked)
 
             # arbitrate
@@ -158,17 +165,6 @@ class LiteDRAMCrossbar(Module):
                     master_rdata_valid = new_master_rdata_valid
                 master_rdata_valids[nm] = master_rdata_valid
 
-        # Delay bank output to match rvalid
-        for i in range(self.read_latency-1):
-            new_master_rbank = Signal(max=self.nbanks)
-            self.sync += new_master_rbank.eq(rbank)
-            rbank = new_master_rbank
-        # Delay wbank output to match wready
-        for i in range(self.write_latency-1):
-            new_master_wbank = Signal(max=self.nbanks)
-            self.sync += new_master_wbank.eq(wbank)
-            wbank = new_master_wbank
-
         for master, master_ready in zip(self.masters, master_readys):
             self.comb += master.cmd.ready.eq(master_ready)
         for master, master_wdata_ready in zip(self.masters, master_wdata_readys):
@@ -191,30 +187,4 @@ class LiteDRAMCrossbar(Module):
 
         # route data reads
         for master in self.masters:
-            self.comb += master.rdata.data.eq(self.controller.rdata)
-            if hasattr(master.rdata, "bank"):
-                self.comb += master.rdata.bank.eq(rbank)
-                self.comb += master.wdata.bank.eq(wbank)
-
-    def split_master_addresses(self, bank_bits, rca_bits, cba_shift):
-        m_ba = [] # bank address
-        m_rca = [] # row and column address
-        for master in self.masters:
-            cba = Signal(self.bank_bits)
-            rca = Signal(self.rca_bits)
-            cba_upper = cba_shift + bank_bits
-            self.comb += cba.eq(master.cmd.addr[cba_shift:cba_upper])
-            if cba_shift < self.rca_bits:
-                if cba_shift:
-                    self.comb += rca.eq(Cat(master.cmd.addr[:cba_shift],
-                                            master.cmd.addr[cba_upper:]))
-                else:
-                    self.comb += rca.eq(master.cmd.addr[cba_upper:])
-            else:
-                self.comb += rca.eq(master.cmd.addr[:cba_shift])
-
-            ba = cba
-
-            m_ba.append(ba)
-            m_rca.append(rca)
-        return m_ba, m_rca
+            self.comb += master.rdata.data.eq(controller.rdata)

@@ -38,8 +38,8 @@ def ax_description(address_width, id_width):
     return [
         ("addr",  address_width),
         ("burst", 2), # Burst type
-        ("len",   8), # Number of data transfers (up to 256)
-        ("size",  4), # Number of bytes of each data transfer (up to 1024 bits)
+        ("len",   8), # Number of data (-1) transfers (up to 256)
+        ("size",  4), # Number of bytes (-1) of each data transfer (up to 1024 bits)
         ("id",    id_width)
     ]
 
@@ -64,7 +64,7 @@ def r_description(data_width, id_width):
 
 
 class LiteDRAMAXIPort(Record):
-    def __init__(self, data_width, address_width, id_width, clock_domain="sys"):
+    def __init__(self, data_width, address_width, id_width=1, clock_domain="sys"):
         self.data_width = data_width
         self.address_width = address_width
         self.id_width = id_width
@@ -97,6 +97,7 @@ class LiteDRAMAXIBurst2Beat(Module):
         self.submodules.fsm = fsm = FSM(reset_state="IDLE")
         fsm.act("IDLE",
             ax_beat.valid.eq(ax_burst.valid),
+            ax_beat.first.eq(1),
             ax_beat.last.eq(ax_burst.len == 0),
             ax_beat.addr.eq(ax_burst.addr),
             ax_beat.id.eq(ax_burst.id),
@@ -114,6 +115,7 @@ class LiteDRAMAXIBurst2Beat(Module):
         self.sync += wrap_offset.eq((ax_burst.len - 1)*size)
         fsm.act("BURST2BEAT",
             ax_beat.valid.eq(1),
+            ax_beat.first.eq(0),
             ax_beat.last.eq(count == ax_burst.len),
             If((ax_burst.burst == burst_types["incr"]) |
                (ax_burst.burst == burst_types["wrap"]),
@@ -163,9 +165,11 @@ class LiteDRAMAXI2NativeW(Module):
         resp_buffer = stream.SyncFIFO([("id", axi.id_width), ("resp", 2)], buffer_depth)
         self.submodules += id_buffer, resp_buffer
         self.comb += [
-            id_buffer.sink.valid.eq(aw.valid & aw.ready),
+            id_buffer.sink.valid.eq(aw.valid & aw.first & aw.ready),
             id_buffer.sink.id.eq(aw.id),
-            If(axi.w.valid & axi.w.last & axi.w.ready,
+            If(w_buffer.source.valid &
+               w_buffer.source.last &
+               w_buffer.source.ready,
                 resp_buffer.sink.valid.eq(1),
                 resp_buffer.sink.resp.eq(resp_types["okay"]),
                 resp_buffer.sink.id.eq(id_buffer.source.id),
@@ -176,20 +180,25 @@ class LiteDRAMAXI2NativeW(Module):
 
         # Command
         self.comb += [
-            self.cmd_request.eq(aw.valid),
-            If(self.cmd_grant,
-                port.cmd.valid.eq(aw.valid),
-                aw.ready.eq(port.cmd.ready),
-                port.cmd.we.eq(1),
-                port.cmd.addr.eq(aw.addr >> ashift)
+            # Emits the command only if we have the data
+            If(w_buffer.source.valid,
+                self.cmd_request.eq(aw.valid),
+                If(self.cmd_grant,
+                    port.cmd.valid.eq(aw.valid),
+                    aw.ready.eq(port.cmd.ready),
+                    port.cmd.we.eq(1),
+                    port.cmd.addr.eq(aw.addr >> ashift)
+                )
             )
         ]
 
         # Write Data
         self.comb += [
-            If(id_buffer.source.valid, axi.w.connect(w_buffer.sink)),
-            w_buffer.source.connect(port.wdata, omit={"strb"}),
-            port.wdata.we.eq(w_buffer.source.strb)
+            axi.w.connect(w_buffer.sink),
+            If(id_buffer.source.valid,
+                w_buffer.source.connect(port.wdata, omit={"strb"}),
+                port.wdata.we.eq(w_buffer.source.strb)
+            )
         ]
 
 

@@ -1,3 +1,6 @@
+"""LiteDRAM Multiplexer."""
+
+import math
 from functools import reduce
 from operator import add, or_, and_
 
@@ -9,8 +12,8 @@ from litex.soc.interconnect import stream
 from litex.soc.interconnect.csr import AutoCSR
 
 from litedram.common import *
-from litedram.core.perf import Bandwidth
-import math
+from litedram.core.bandwidth import Bandwidth
+
 
 class _CommandChooser(Module):
     def __init__(self, requests):
@@ -80,6 +83,7 @@ class _CommandChooser(Module):
     def read(self):
         return self.cmd.is_read
 
+(STEER_NOP, STEER_CMD, STEER_REQ, STEER_REFRESH) = range(4)
 
 class _Steerer(Module):
     def __init__(self, commands, dfi):
@@ -95,7 +99,7 @@ class _Steerer(Module):
             else:
                 return cmd.valid & cmd.ready & getattr(cmd, attr)
 
-        for phase, sel in zip(dfi.phases, self.sel):
+        for i, (phase, sel) in enumerate(zip(dfi.phases, self.sel)):
             nranks = len(phase.cs_n)
             rankbits = log2_int(nranks)
             if hasattr(phase, "reset_n"):
@@ -105,10 +109,13 @@ class _Steerer(Module):
                 # FIXME: add dynamic drive for multi-rank (will be needed for high frequencies)
                 self.comb += phase.odt.eq(Replicate(Signal(reset=1), nranks))
             if rankbits:
-                rank_decoder = Decoder(rankbits)
+                rank_decoder = Decoder(nranks)
                 self.submodules += rank_decoder
                 self.comb += rank_decoder.i.eq((Array(cmd.ba[-rankbits:] for cmd in commands)[sel]))
-                self.sync += phase.cs_n.eq(~rank_decoder.o)
+                if i == 0: # Select all ranks on refresh.
+                    self.sync += If(sel == STEER_REFRESH, phase.cs_n.eq(0)).Else(phase.cs_n.eq(~rank_decoder.o))
+                else:
+                    self.sync += phase.cs_n.eq(~rank_decoder.o)
                 self.sync += phase.bank.eq(Array(cmd.ba[:-rankbits] for cmd in commands)[sel])
             else:
                 self.sync += phase.cs_n.eq(0)
@@ -127,30 +134,6 @@ class _Steerer(Module):
                 phase.rddata_en.eq(rddata_ens[sel]),
                 phase.wrdata_en.eq(wrdata_ens[sel])
             ]
-
-
-class tXXDController(Module):
-    def __init__(self, txxd):
-        self.valid = valid = Signal()
-        self.ready = ready = Signal(reset=1)
-        ready.attr.add("no_retiming")
-
-        # # #
-
-        if txxd is not None:
-            count = Signal(max=max(txxd, 2))
-            self.sync += \
-                If(valid,
-                    count.eq(txxd-1),
-                    If((txxd - 1) == 0,
-                        ready.eq(1)
-                    ).Else(
-                        ready.eq(0)
-                    )
-                ).Elif(~ready,
-                    count.eq(count - 1),
-                    If(count == 1, ready.eq(1))
-                )
 
 
 class tFAWController(Module):
@@ -182,8 +165,7 @@ class Multiplexer(Module, AutoCSR):
             bank_machines,
             refresher,
             dfi,
-            interface,
-            with_bandwidth=False):
+            interface):
         assert(settings.phy.nphases == len(dfi.phases))
 
         ras_allowed = Signal(reset=1)
@@ -206,7 +188,6 @@ class Multiplexer(Module, AutoCSR):
                                         log2_int(len(bank_machines))))
         # nop must be 1st
         commands = [nop, choose_cmd.cmd, choose_req.cmd, refresher.cmd]
-        (STEER_NOP, STEER_CMD, STEER_REQ, STEER_REFRESH) = range(4)
         steerer = _Steerer(commands, dfi)
         self.submodules += steerer
 

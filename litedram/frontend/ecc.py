@@ -8,6 +8,7 @@ from litex.soc.interconnect.stream import *
 
 from litedram.common import wdata_description, rdata_description
 
+
 def compute_m_n(k):
     m = 1
     while (2**m < (m + k + 1)):
@@ -44,7 +45,7 @@ def compute_cover_positions(m, p):
     return r
 
 
-class SECDEC:
+class SECDED:
     def place_data(self, data, codeword):
         d_pos = compute_data_positions(len(codeword))
         for i, d in enumerate(d_pos):
@@ -76,7 +77,7 @@ class SECDEC:
             [codeword[i] for i in range(len(codeword))]))
 
 
-class ECCEncoder(SECDEC, Module):
+class ECCEncoder(SECDED, Module):
     def __init__(self, k):
         m, n = compute_m_n(k)
 
@@ -103,7 +104,7 @@ class ECCEncoder(SECDEC, Module):
         self.comb += o.eq(Cat(parity, codeword_d_p))
 
 
-class ECCDecoder(SECDEC, Module):
+class ECCDecoder(SECDED, Module):
     def __init__(self, k):
         m, n = compute_m_n(k)
 
@@ -150,8 +151,8 @@ class ECCDecoder(SECDEC, Module):
 
 class LiteDRAMNativePortECCW(Module):
     def __init__(self, data_width_from, data_width_to):
-        self.sink = sink = Endpoint(wdata_description(data_width_from, False))
-        self.source = source = Endpoint(wdata_description(data_width_to, False))
+        self.sink = sink = Endpoint(wdata_description(data_width_from))
+        self.source = source = Endpoint(wdata_description(data_width_to))
 
         # # #
 
@@ -168,8 +169,8 @@ class LiteDRAMNativePortECCW(Module):
 
 class LiteDRAMNativePortECCR(Module):
     def __init__(self, data_width_from, data_width_to):
-        self.sink = sink = Endpoint(rdata_description(data_width_to, False))
-        self.source = source = Endpoint(rdata_description(data_width_from, False))
+        self.sink = sink = Endpoint(rdata_description(data_width_to))
+        self.source = source = Endpoint(rdata_description(data_width_from))
         self.enable = Signal()
         self.sec = Signal(8)
         self.dec = Signal(8)
@@ -211,7 +212,7 @@ class LiteDRAMNativePortECC(Module, AutoCSR):
         ecc_wdata = BufferizeEndpoints({"source": DIR_SOURCE})(ecc_wdata)
         self.submodules += ecc_wdata
         self.comb += [
-            port_from.wdata.connect(ecc_wdata.sink, omit={"bank"}),
+            port_from.wdata.connect(ecc_wdata.sink),
             ecc_wdata.source.connect(port_to.wdata)
         ]
 
@@ -223,7 +224,7 @@ class LiteDRAMNativePortECC(Module, AutoCSR):
         self.submodules += ecc_rdata
         self.comb += [
             ecc_rdata.enable.eq(self.enable.storage),
-            port_to.rdata.connect(ecc_rdata.sink, omit={"bank"}),
+            port_to.rdata.connect(ecc_rdata.sink),
             ecc_rdata.source.connect(port_from.rdata)
         ]
 
